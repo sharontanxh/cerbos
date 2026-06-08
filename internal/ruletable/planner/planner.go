@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/cel-go/cel"
@@ -712,7 +713,8 @@ type ExprCache struct {
 	mu sync.RWMutex
 }
 
-func NewExprCache() *ExprCache {
+func NewExprCache(size uint) *ExprCache {
+	_ = size // stub: bounded behavior not yet implemented
 	return &ExprCache{m: make(map[string]*exprpb.Expr)}
 }
 
@@ -724,6 +726,24 @@ func (c *ExprCache) Clear() {
 	clear(c.m)
 	c.mu.Unlock()
 }
+
+// Get returns the cached AST for src, with a second return reporting whether
+// one was present. Mirrors *cache.Cache[K, V].Get so the post-fix solution
+// can rely on promoted methods if it embeds the generic cache.
+func (c *ExprCache) Get(src string) (*exprpb.Expr, bool) {
+	if c == nil {
+		return nil, false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	x, ok := c.m[src]
+	return x, ok
+}
+
+// compileToExprMu is a stub-only serialization point — same role as
+// compileFromSourceMu in ruletable.go. Solvers replace this with per-key
+// coalescing so distinct keys can compile in parallel.
+var compileToExprMu sync.Mutex
 
 func (c *ExprCache) getOrCompile(e *runtimev1.Expr) (*exprpb.Expr, error) {
 	if c == nil {
@@ -737,7 +757,9 @@ func (c *ExprCache) getOrCompile(e *runtimev1.Expr) (*exprpb.Expr, error) {
 	}
 	c.mu.RUnlock()
 
+	compileToExprMu.Lock()
 	x, err := compileToExpr(e.Original)
+	compileToExprMu.Unlock()
 	if err != nil {
 		return nil, err
 	}
@@ -748,7 +770,20 @@ func (c *ExprCache) getOrCompile(e *runtimev1.Expr) (*exprpb.Expr, error) {
 	return x, nil
 }
 
+// CompileToExprCallCount is the total number of times compileToExpr has been
+// invoked across the process lifetime. Exposed for tests that verify
+// concurrent loads of the same key do not redundantly recompile.
+var CompileToExprCallCount atomic.Int64
+
+// ActiveExprCompiles is the number of compileToExpr invocations currently in
+// flight. Tests poll this gauge to detect implementations that serialize all
+// loads (peak stays at 1) vs. those that allow per-key parallelism.
+var ActiveExprCompiles atomic.Int64
+
 func compileToExpr(src string) (*exprpb.Expr, error) {
+	CompileToExprCallCount.Add(1)
+	ActiveExprCompiles.Add(1)
+	defer ActiveExprCompiles.Add(-1)
 	ast, iss := conditions.StdEnv.Compile(src)
 	if iss != nil && iss.Err() != nil {
 		return nil, fmt.Errorf("failed to compile %q: %w", src, iss.Err())

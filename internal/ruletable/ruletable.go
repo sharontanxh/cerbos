@@ -10,6 +10,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/google/cel-go/cel"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -454,7 +455,8 @@ type ProgramCache struct {
 	mu sync.RWMutex
 }
 
-func NewProgramCache() *ProgramCache {
+func NewProgramCache(size uint) *ProgramCache {
+	_ = size // stub: bounded behavior not yet implemented
 	return &ProgramCache{
 		m: make(map[string]cel.Program),
 	}
@@ -469,6 +471,25 @@ func (c *ProgramCache) Clear() {
 	c.mu.Unlock()
 }
 
+// Get returns the cached program for src, with a second return reporting
+// whether one was present. Mirrors *cache.Cache[K, V].Get so the post-fix
+// solution can rely on promoted methods if it embeds the generic cache.
+func (c *ProgramCache) Get(src string) (cel.Program, bool) {
+	if c == nil {
+		return nil, false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	prg, ok := c.m[src]
+	return prg, ok
+}
+
+// compileFromSourceMu is a stub-only serialization point around compileFromSource.
+// The naive baseline holds it across the (slow) compile call, which causes loads
+// of distinct keys to queue behind each other. Solvers replace this serialization
+// with per-key coalescing so different keys can compile in parallel.
+var compileFromSourceMu sync.Mutex
+
 func (c *ProgramCache) GetOrCreate(expr *runtimev1.Expr) (cel.Program, error) {
 	if c == nil {
 		return compileFromSource(expr.Original)
@@ -481,7 +502,9 @@ func (c *ProgramCache) GetOrCreate(expr *runtimev1.Expr) (cel.Program, error) {
 	}
 	c.mu.RUnlock()
 
+	compileFromSourceMu.Lock()
 	prg, err := compileFromSource(expr.Original)
+	compileFromSourceMu.Unlock()
 	if err != nil {
 		return nil, err
 	}
@@ -492,7 +515,21 @@ func (c *ProgramCache) GetOrCreate(expr *runtimev1.Expr) (cel.Program, error) {
 	return prg, nil
 }
 
+// CompileCallCount is the total number of times compileFromSource has been
+// invoked across the process lifetime. Exposed for tests that verify
+// concurrent loads of the same key do not redundantly recompile.
+var CompileCallCount atomic.Int64
+
+// ActiveCompiles is the number of compileFromSource invocations currently
+// in flight. Tests poll this gauge to detect implementations that serialize
+// all loads (peak stays at 1) vs. those that allow per-key parallelism
+// (peak goes above 1).
+var ActiveCompiles atomic.Int64
+
 func compileFromSource(src string) (cel.Program, error) {
+	CompileCallCount.Add(1)
+	ActiveCompiles.Add(1)
+	defer ActiveCompiles.Add(-1)
 	ast, iss := conditions.StdEnv.Compile(src)
 	if iss != nil && iss.Err() != nil {
 		return nil, iss.Err()
@@ -516,8 +553,8 @@ func NewRuleTableFromLoader(ctx context.Context, policyLoader policyloader.Polic
 func NewRuleTable(protoRT *runtimev1.RuleTable) (*RuleTable, error) {
 	rt := &RuleTable{
 		idx:           index.New(),
-		programCache:  NewProgramCache(),
-		planExprCache: planner.NewExprCache(),
+		programCache:  NewProgramCache(1024),
+		planExprCache: planner.NewExprCache(1024),
 	}
 
 	if err := rt.init(protoRT); err != nil {
