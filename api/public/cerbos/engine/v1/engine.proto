@@ -11,6 +11,7 @@ import "cerbos/schema/v1/schema.proto";
 import "google/api/expr/v1alpha1/checked.proto";
 import "google/api/field_behavior.proto";
 import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
 import "protoc-gen-openapiv2/options/annotations.proto";
 
 option csharp_namespace = "Cerbos.Api.V1.Engine";
@@ -287,6 +288,55 @@ message Principal {
       example: "\"acme.corp\""
     }
   ];
+  AuthContext auth = 6 [
+    (google.api.field_behavior) = OPTIONAL,
+    (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_field) = {
+      description: "Typed authentication context for this principal. Populated either explicitly by the caller or derived from auxData JWT claims. Required at evaluation time only for policies that reference auth attributes."
+    }
+  ];
+}
+
+message AuthContext {
+  option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_schema) = {
+    json_schema: {description: "Typed authentication context for a principal: when they authenticated, by what methods, and the delegation chain (if any agents are acting on their behalf)."}
+  };
+  google.protobuf.Timestamp auth_time = 1 [
+    (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_field) = {
+      description: "Timestamp of the principal's most recent authentication event. Sourced from the OIDC auth_time claim when JWTs are used."
+    }
+  ];
+  repeated string methods = 2 [
+    (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_field) = {
+      description: "Authentication methods used in the most recent authentication event. Sourced from the OIDC amr claim when JWTs are used."
+      example: "[\"pwd\", \"mfa\"]"
+    }
+  ];
+  repeated AuthHop acting_chain = 3 [
+    (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_field) = {
+      description: "Chain of agents acting on the principal's behalf, ordered outermost-first. Empty for direct (non-delegated) requests. Sourced from the RFC 8693 act claim chain when JWTs are used."
+    }
+  ];
+}
+
+message AuthHop {
+  option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_schema) = {
+    json_schema: {description: "A single hop in a delegation chain — one agent or service acting on another's behalf."}
+  };
+  string id = 1 [
+    (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_field) = {
+      description: "ID of the actor for this hop (service or agent identifier)."
+    }
+  ];
+  google.protobuf.Timestamp auth_time = 2 [
+    (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_field) = {
+      description: "When this hop's authorization was issued."
+    }
+  ];
+  repeated string methods = 3 [
+    (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_field) = {
+      description: "Authentication methods used to authorize this hop."
+    }
+  ];
 }
 
 message AuxData {
@@ -377,6 +427,7 @@ message Request {
     map<string, google.protobuf.Value> attr = 3;
     string policy_version = 4;
     string scope = 5;
+    AuthContext auth = 6;
   }
 
   message Resource {

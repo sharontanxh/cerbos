@@ -43,6 +43,51 @@ var hashpb_uint64KeyPool = sync.Pool{
 	New: func() any { return make([]uint64, 0, 32) },
 }
 
+func cerbos_engine_v1_AuthContext_hashpb_sum(m *AuthContext, hasher hash.Hash, ignore map[string]struct{}, b *[10]byte) {
+	if _, ok := ignore["cerbos.engine.v1.AuthContext.auth_time"]; !ok {
+		if m.GetAuthTime() != nil {
+			google_protobuf_Timestamp_hashpb_sum(m.GetAuthTime(), hasher, ignore, b)
+		}
+	}
+	if _, ok := ignore["cerbos.engine.v1.AuthContext.methods"]; !ok {
+		if len(m.Methods) > 0 {
+			for _, v := range m.Methods {
+				_, _ = hasher.Write(protowire.AppendVarint(b[:0], uint64(len(v))))
+				_, _ = hasher.Write(unsafe.Slice(unsafe.StringData(v), len(v)))
+			}
+		}
+	}
+	if _, ok := ignore["cerbos.engine.v1.AuthContext.acting_chain"]; !ok {
+		if len(m.ActingChain) > 0 {
+			for _, v := range m.ActingChain {
+				if v != nil {
+					cerbos_engine_v1_AuthHop_hashpb_sum(v, hasher, ignore, b)
+				}
+			}
+		}
+	}
+}
+
+func cerbos_engine_v1_AuthHop_hashpb_sum(m *AuthHop, hasher hash.Hash, ignore map[string]struct{}, b *[10]byte) {
+	if _, ok := ignore["cerbos.engine.v1.AuthHop.id"]; !ok {
+		_, _ = hasher.Write(protowire.AppendVarint(b[:0], uint64(len(m.GetId()))))
+		_, _ = hasher.Write(unsafe.Slice(unsafe.StringData(m.GetId()), len(m.GetId())))
+	}
+	if _, ok := ignore["cerbos.engine.v1.AuthHop.auth_time"]; !ok {
+		if m.GetAuthTime() != nil {
+			google_protobuf_Timestamp_hashpb_sum(m.GetAuthTime(), hasher, ignore, b)
+		}
+	}
+	if _, ok := ignore["cerbos.engine.v1.AuthHop.methods"]; !ok {
+		if len(m.Methods) > 0 {
+			for _, v := range m.Methods {
+				_, _ = hasher.Write(protowire.AppendVarint(b[:0], uint64(len(v))))
+				_, _ = hasher.Write(unsafe.Slice(unsafe.StringData(v), len(v)))
+			}
+		}
+	}
+}
+
 func cerbos_engine_v1_AuxData_hashpb_sum(m *AuxData, hasher hash.Hash, ignore map[string]struct{}, b *[10]byte) {
 	if _, ok := ignore["cerbos.engine.v1.AuxData.jwt"]; !ok {
 		if len(m.Jwt) > 0 {
@@ -489,6 +534,11 @@ func cerbos_engine_v1_Principal_hashpb_sum(m *Principal, hasher hash.Hash, ignor
 		_, _ = hasher.Write(protowire.AppendVarint(b[:0], uint64(len(m.GetScope()))))
 		_, _ = hasher.Write(unsafe.Slice(unsafe.StringData(m.GetScope()), len(m.GetScope())))
 	}
+	if _, ok := ignore["cerbos.engine.v1.Principal.auth"]; !ok {
+		if m.GetAuth() != nil {
+			cerbos_engine_v1_AuthContext_hashpb_sum(m.GetAuth(), hasher, ignore, b)
+		}
+	}
 }
 
 func cerbos_engine_v1_Request_Principal_hashpb_sum(m *Request_Principal, hasher hash.Hash, ignore map[string]struct{}, b *[10]byte) {
@@ -538,6 +588,11 @@ func cerbos_engine_v1_Request_Principal_hashpb_sum(m *Request_Principal, hasher 
 	if _, ok := ignore["cerbos.engine.v1.Request.Principal.scope"]; !ok {
 		_, _ = hasher.Write(protowire.AppendVarint(b[:0], uint64(len(m.GetScope()))))
 		_, _ = hasher.Write(unsafe.Slice(unsafe.StringData(m.GetScope()), len(m.GetScope())))
+	}
+	if _, ok := ignore["cerbos.engine.v1.Request.Principal.auth"]; !ok {
+		if m.GetAuth() != nil {
+			cerbos_engine_v1_AuthContext_hashpb_sum(m.GetAuth(), hasher, ignore, b)
+		}
 	}
 }
 

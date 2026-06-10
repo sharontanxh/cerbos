@@ -70,6 +70,7 @@ func init() {
 		ext.Encoders(),
 		ext.Math(),
 		CerbosCELLib(),
+		CerbosAuthCELLib(),
 		types.Registry(),
 	)
 	if err != nil {
