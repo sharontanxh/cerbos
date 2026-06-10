@@ -54,6 +54,7 @@ func (rt *RuleTable) planWithAuditTrail(
 
 	effectivePolicies := make(map[string]*policyv1.SourceAttributes)
 	auditTrail := &auditv1.AuditTrail{EffectivePolicies: effectivePolicies}
+	auditTracker := newPlanAuditTracker()
 
 	if len(principalScopes) == 0 && len(resourceScopes) == 0 {
 		return noMatchPlanOutput(input, nil), auditTrail, nil
@@ -82,6 +83,9 @@ func (rt *RuleTable) planWithAuditTrail(
 			output := planner.MkPlanResourcesOutput(input, nil, validationErrors)
 			output.Filter = &enginev1.PlanResourcesFilter{Kind: enginev1.PlanResourcesFilter_KIND_ALWAYS_DENIED}
 			output.FilterDebug = planner.FilterToString(output.Filter)
+			auditTrail.PlanContributions = []*auditv1.PlanContribution{
+				{Kind: auditv1.PlanContribution_KIND_SCHEMA_REJECTION, PolicyFqn: resourcePolicyFQN},
+			}
 			return output, auditTrail, nil
 		}
 	}
@@ -131,7 +135,7 @@ func (rt *RuleTable) planWithAuditTrail(
 				rolesIncludingParents := rt.idx.AddParentRoles([]string{resourceScope}, []string{role})
 
 				var bindings []*index.Binding
-				for _, scope := range scopes {
+				for sIdx, scope := range scopes {
 					// Once a child OVERRIDE_PARENT scope has matched an unconditional ALLOW, no
 					// parent-scope rule can change the outcome, so we skip
 					if bv, ok := planner.IsNodeConstBool(childOverrideAllow); ok && bv {
@@ -237,6 +241,12 @@ func (rt *RuleTable) planWithAuditTrail(
 						switch b.Core.Effect { //nolint:exhaustive
 						case effectv1.Effect_EFFECT_ALLOW:
 							scopeAllowNode = addNode(scopeAllowNode, node, planner.MkOrNode)
+							// Per the audit spec, exclude const-false ALLOW bindings from
+							// PlanContributions. The filter remains unchanged (the OR with
+							// false is logically a no-op); we just don't record the binding.
+							if bv, ok := planner.IsNodeConstBool(node); !ok || bv {
+								auditTracker.addAllow(action, b.OriginFqn, scope, role)
+							}
 						case effectv1.Effect_EFFECT_DENY:
 							// ignore constant false DENY nodes
 							if bv, ok := planner.IsNodeConstBool(node); ok && !bv {
@@ -248,6 +258,11 @@ func (rt *RuleTable) planWithAuditTrail(
 							} else {
 								scopeDenyNode = addNode(scopeDenyNode, node, planner.MkOrNode)
 							}
+							isConstTrue := false
+							if bv, ok := planner.IsNodeConstBool(node); ok && bv {
+								isConstTrue = true
+							}
+							auditTracker.addDeny(action, b.OriginFqn, scope, role, b.Core.FromRolePolicy, isConstTrue)
 						}
 					}
 
@@ -282,6 +297,14 @@ func (rt *RuleTable) planWithAuditTrail(
 					if scopeAllowNode != nil &&
 						rt.GetScopeScopePermissions(scope) == policyv1.ScopePermissions_SCOPE_PERMISSIONS_OVERRIDE_PARENT {
 						childOverrideAllow = addNode(childOverrideAllow, scopeAllowNode, planner.MkOrNode)
+						// Re-tag ALLOW candidates from this OVERRIDE_PARENT scope per the
+						// precedence rule. Cerbos's compiler defaults unset scopePermissions
+						// to OVERRIDE_PARENT, so the rt-level check fires even for policies
+						// with no scope hierarchy. Only retag when this override actually
+						// has a parent scope it could suppress.
+						if sIdx < len(scopes)-1 {
+							auditTracker.retagOverrideParentAllow(action, scope, role)
+						}
 					}
 				}
 
@@ -289,6 +312,7 @@ func (rt *RuleTable) planWithAuditTrail(
 				// matching rules in the parent scopes, therefore null the node
 				if pendingAllow {
 					roleAllowNode = nil
+					auditTracker.nullifyPendingAllow(action, role)
 				}
 
 				// Const DENY overrides any ALLOW in the same role. Check both deny types.
@@ -304,6 +328,7 @@ func (rt *RuleTable) planWithAuditTrail(
 					// If we pass the role level `DENY==true`, we end up overriding the result for all roles with an `AND(..., NOT(true))`
 					// due to the policyTypeDenyNode inversion below. Inverting and resolving in the allow node ensures the role is OR'd
 					// against others, e.g. `OR(false, roleAllow1, roleAllow2, ...)`).
+					auditTracker.nullifyConstTrueDeny(action, role)
 					roleAllowNode = planner.MkFalseNode()
 					roleDenyNode = nil
 					roleDenyRolePolicyNode = nil
@@ -361,6 +386,10 @@ func (rt *RuleTable) planWithAuditTrail(
 			} else {
 				nf.Add(rootNode, effectv1.Effect_EFFECT_ALLOW)
 			}
+		} else {
+			// No policy produced a node for this action; discard any
+			// candidates that may have been added (none survived).
+			auditTracker.discardAction(action)
 		}
 
 		if nf.AllowIsEmpty() && !nf.DenyIsEmpty() { // reset a conditional DENY to an unconditional one
@@ -381,6 +410,7 @@ func (rt *RuleTable) planWithAuditTrail(
 		output.FilterDebug = noPolicyMatch
 	}
 
+	auditTrail.PlanContributions = auditTracker.emit()
 	return output, auditTrail, nil
 }
 
