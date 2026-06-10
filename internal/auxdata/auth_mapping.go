@@ -44,3 +44,24 @@ func DeriveAuthContextFromJWTClaims(claims map[string]*structpb.Value) *enginev1
 	_ = claims
 	return nil
 }
+
+// MergeAuthContext combines an explicit caller-supplied AuthContext with one
+// auto-derived from JWT claims. Returns the value that should be exposed to
+// CEL evaluation as `Principal.AuthContext`. The combine rule is fixed:
+//
+//   - If `explicit` is non-nil, return it unchanged. The caller has stated
+//     intent and that takes precedence over anything inferred from auxData.
+//
+//   - Otherwise return `derived` (which may itself be nil — for an
+//     unauthenticated request neither side carries an AuthContext).
+//
+// The auxdata pipeline calls this once per request: explicit comes from
+// `CheckInput.Principal.Auth` as set by the caller, derived comes from
+// `DeriveAuthContextFromJWTClaims` over the verified JWT.
+//
+// Currently stubbed to return nil.
+func MergeAuthContext(explicit, derived *enginev1.AuthContext) *enginev1.AuthContext {
+	_ = explicit
+	_ = derived
+	return nil
+}
