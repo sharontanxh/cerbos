@@ -134,6 +134,15 @@ func cerbos_audit_v1_AuditTrail_hashpb_sum(m *AuditTrail, hasher hash.Hash, igno
 			}
 		}
 	}
+	if _, ok := ignore["cerbos.audit.v1.AuditTrail.plan_contributions"]; !ok {
+		if len(m.PlanContributions) > 0 {
+			for _, v := range m.PlanContributions {
+				if v != nil {
+					cerbos_audit_v1_PlanContribution_hashpb_sum(v, hasher, ignore, b)
+				}
+			}
+		}
+	}
 }
 
 func cerbos_audit_v1_DecisionLogEntry_CheckResources_hashpb_sum(m *DecisionLogEntry_CheckResources, hasher hash.Hash, ignore map[string]struct{}, b *[10]byte) {
@@ -303,6 +312,28 @@ func cerbos_audit_v1_Peer_hashpb_sum(m *Peer, hasher hash.Hash, ignore map[strin
 	if _, ok := ignore["cerbos.audit.v1.Peer.forwarded_for"]; !ok {
 		_, _ = hasher.Write(protowire.AppendVarint(b[:0], uint64(len(m.GetForwardedFor()))))
 		_, _ = hasher.Write(unsafe.Slice(unsafe.StringData(m.GetForwardedFor()), len(m.GetForwardedFor())))
+	}
+}
+
+func cerbos_audit_v1_PlanContribution_hashpb_sum(m *PlanContribution, hasher hash.Hash, ignore map[string]struct{}, b *[10]byte) {
+	if _, ok := ignore["cerbos.audit.v1.PlanContribution.action"]; !ok {
+		_, _ = hasher.Write(protowire.AppendVarint(b[:0], uint64(len(m.GetAction()))))
+		_, _ = hasher.Write(unsafe.Slice(unsafe.StringData(m.GetAction()), len(m.GetAction())))
+	}
+	if _, ok := ignore["cerbos.audit.v1.PlanContribution.policy_fqn"]; !ok {
+		_, _ = hasher.Write(protowire.AppendVarint(b[:0], uint64(len(m.GetPolicyFqn()))))
+		_, _ = hasher.Write(unsafe.Slice(unsafe.StringData(m.GetPolicyFqn()), len(m.GetPolicyFqn())))
+	}
+	if _, ok := ignore["cerbos.audit.v1.PlanContribution.scope"]; !ok {
+		_, _ = hasher.Write(protowire.AppendVarint(b[:0], uint64(len(m.GetScope()))))
+		_, _ = hasher.Write(unsafe.Slice(unsafe.StringData(m.GetScope()), len(m.GetScope())))
+	}
+	if _, ok := ignore["cerbos.audit.v1.PlanContribution.role"]; !ok {
+		_, _ = hasher.Write(protowire.AppendVarint(b[:0], uint64(len(m.GetRole()))))
+		_, _ = hasher.Write(unsafe.Slice(unsafe.StringData(m.GetRole()), len(m.GetRole())))
+	}
+	if _, ok := ignore["cerbos.audit.v1.PlanContribution.kind"]; !ok {
+		_, _ = hasher.Write(protowire.AppendVarint(b[:0], uint64(m.GetKind())))
 	}
 }
 

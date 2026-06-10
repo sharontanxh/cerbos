@@ -74,6 +74,49 @@ message Peer {
 
 message AuditTrail {
   map<string, cerbos.policy.v1.SourceAttributes> effective_policies = 1;
+  repeated PlanContribution plan_contributions = 2;
+}
+
+// PlanContribution records a single binding's contribution to a per-action
+// filter produced by Plan. See internal/ruletable/plan.go for the elision and
+// inversion semantics that determine which bindings survive and how they are
+// tagged.
+//
+// Ordering: PlanContributions in an AuditTrail MUST be sorted by
+// (action ASC, policy_fqn ASC, scope ASC, role ASC).
+message PlanContribution {
+  // Kind enum values are assigned in precedence order. When more than one
+  // Kind could apply to a single contribution (e.g. a child OVERRIDE_PARENT
+  // scope produces an unconditional ALLOW that both survives as DIRECT_ALLOW
+  // AND suppresses parent-scope walks as OVERRIDE_PARENT_ALLOW_SOURCE), the
+  // contribution MUST be tagged with the Kind that has the highest numeric
+  // value. Do NOT renumber or insert intermediate values without updating
+  // the precedence semantics described in this comment and in
+  // internal/ruletable/plan.go.
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    KIND_DIRECT_ALLOW = 1;
+    KIND_DIRECT_DENY = 2;
+    KIND_INVERTED_DENY_AS_GATE = 3;
+    KIND_ROLE_POLICY_DENY_AND_GATE = 4;
+    KIND_SCHEMA_REJECTION = 5;
+    KIND_OVERRIDE_PARENT_ALLOW_SOURCE = 6;
+  }
+
+  // The concrete action that was requested (not a binding-level wildcard).
+  // Empty for KIND_SCHEMA_REJECTION, which short-circuits before any
+  // per-action evaluation.
+  string action = 1;
+  // Fully-qualified name of the policy whose binding contributed.
+  string policy_fqn = 2;
+  // Scope at which the contributing binding was matched. Empty for the root
+  // scope and for KIND_SCHEMA_REJECTION.
+  string scope = 3;
+  // Role from the principal's role set that matched the contributing binding.
+  // Empty for principal-policy contributions (which are role-agnostic) and for
+  // KIND_SCHEMA_REJECTION.
+  string role = 4;
+  Kind kind = 5;
 }
 
 message PolicySource {

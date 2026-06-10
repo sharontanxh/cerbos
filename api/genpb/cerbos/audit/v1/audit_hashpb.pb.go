@@ -80,6 +80,16 @@ func (m *AuditTrail) HashPB(hasher hash.Hash, ignore map[string]struct{}) {
 
 // HashPB computes a hash of the message using the given hash function
 // The ignore set must contain fully-qualified field names (pkg.msg.field) that should be ignored from the hash
+func (m *PlanContribution) HashPB(hasher hash.Hash, ignore map[string]struct{}) {
+	if m != nil {
+		b := hashpb_bufPool.Get().(*[10]byte)
+		cerbos_audit_v1_PlanContribution_hashpb_sum(m, hasher, ignore, b)
+		hashpb_bufPool.Put(b)
+	}
+}
+
+// HashPB computes a hash of the message using the given hash function
+// The ignore set must contain fully-qualified field names (pkg.msg.field) that should be ignored from the hash
 func (m *PolicySource) HashPB(hasher hash.Hash, ignore map[string]struct{}) {
 	if m != nil {
 		b := hashpb_bufPool.Get().(*[10]byte)
