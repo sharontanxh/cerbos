@@ -14,36 +14,20 @@ import (
 	"github.com/cerbos/cerbos/internal/engine"
 )
 
-// RunCheckPipelineCallCount is the total number of times RunCheckPipeline
-// has been invoked across the process lifetime. Tests use the delta between
-// before/after counts to verify that CerbosService.CheckResources,
-// AuthzenAuthorizationService.AccessEvaluation, and
-// AuthzenAuthorizationService.AccessEvaluationBatch all delegate to the
-// shared pipeline rather than retaining their inlined implementations.
+// Total number of times RunCheckPipeline has been invoked across the process lifetime
 var RunCheckPipelineCallCount atomic.Int64
 
 // RunCheckPipeline runs the shared check-resources flow used by all three
-// service endpoints that go through the engine's Check API. The contract:
+// service endpoints that go through the engine's Check API.
 //
-//  1. Calls eng.Check(ctx, inputs).
-//  2. On error, returns a gRPC status with consistent codes:
-//     - compile.PolicyCompilationErr → codes.FailedPrecondition
-//     - any other engine error → codes.Internal
-//     The log argument is used for the standard "Policy check failed" entry.
-//  3. Wraps response assembly in a tracing.RecordSpan2("assemble_response", ...) span,
-//     so all three callers gain identical observability (today AccessEvaluationBatch
-//     lacks this span — the refactor fixes the asymmetry incidentally).
-//  4. Returns *responsev1.CheckResourcesResponse with RequestId = requestID and
-//     one ResultEntry per input/output pair, including per-action Meta only when
-//     includeMeta is true.
+// Returns *responsev1.CheckResourcesResponse with RequestId = requestID and
+// one ResultEntry per input/output pair, including per-action Meta only when
+// includeMeta is true.
 //
-// Callers MUST pre-process their service-specific request shapes into the
+// Callers first pre-process their service-specific request shapes into the
 // shared []*enginev1.CheckInput before invocation. AuxData translation,
 // request-limit checks, and AccessEvaluationBatch's principal-grouping all
 // stay at the call site.
-//
-// Stubbed to return (nil, nil) so any unit test asserting on the response
-// shape fails on the baseline. The solver implements the body.
 func RunCheckPipeline(
 	ctx context.Context,
 	log *zap.Logger,
