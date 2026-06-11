@@ -11,27 +11,28 @@ import (
 
 	enginev1 "github.com/cerbos/cerbos/api/genpb/cerbos/engine/v1"
 	responsev1 "github.com/cerbos/cerbos/api/genpb/cerbos/response/v1"
-	"github.com/cerbos/cerbos/internal/engine"
+	"github.com/cerbos/cerbos/internal/evaluator"
 )
+
+// Checker is the engine surface that this package consumes. *engine.Engine
+// satisfies it. Both CerbosService and AuthzenAuthorizationService should
+// consume Checker in place of *engine.Engine so that engine behavior can be
+// faked in tests — in particular, so the errors.Is(err, compile.PolicyCompilationErr{})
+// branches in the services become exercisable.
+type Checker interface {
+	Check(ctx context.Context, inputs []*enginev1.CheckInput, opts ...evaluator.CheckOpt) ([]*enginev1.CheckOutput, error)
+	Plan(ctx context.Context, input *enginev1.PlanResourcesInput, opts ...evaluator.CheckOpt) (*enginev1.PlanResourcesOutput, error)
+}
 
 // Total number of times RunCheckPipeline has been invoked across the process lifetime
 var RunCheckPipelineCallCount atomic.Int64
 
 // RunCheckPipeline runs the shared check-resources flow used by all three
 // service endpoints that go through the engine's Check API.
-//
-// Returns *responsev1.CheckResourcesResponse with RequestId = requestID and
-// one ResultEntry per input/output pair, including per-action Meta only when
-// includeMeta is true.
-//
-// Callers first pre-process their service-specific request shapes into the
-// shared []*enginev1.CheckInput before invocation. AuxData translation,
-// request-limit checks, and AccessEvaluationBatch's principal-grouping all
-// stay at the call site.
 func RunCheckPipeline(
 	ctx context.Context,
 	log *zap.Logger,
-	eng *engine.Engine,
+	eng Checker,
 	inputs []*enginev1.CheckInput,
 	requestID string,
 	includeMeta bool,
