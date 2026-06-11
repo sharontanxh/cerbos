@@ -6,10 +6,8 @@ package svc
 import (
 	"context"
 	"encoding/base64"
-	"errors"
 	"fmt"
 
-	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -21,12 +19,9 @@ import (
 	effectv1 "github.com/cerbos/cerbos/api/genpb/cerbos/effect/v1"
 	enginev1 "github.com/cerbos/cerbos/api/genpb/cerbos/engine/v1"
 	requestv1 "github.com/cerbos/cerbos/api/genpb/cerbos/request/v1"
-	responsev1 "github.com/cerbos/cerbos/api/genpb/cerbos/response/v1"
 	"github.com/cerbos/cerbos/internal/auxdata"
-	"github.com/cerbos/cerbos/internal/compile"
 	"github.com/cerbos/cerbos/internal/engine"
 	"github.com/cerbos/cerbos/internal/observability/logging"
-	"github.com/cerbos/cerbos/internal/observability/tracing"
 	"github.com/cerbos/cerbos/internal/util"
 )
 
@@ -70,36 +65,23 @@ func (aas *AuthzenAuthorizationService) AccessEvaluation(ctx context.Context, r 
 		AuxData:   auxData,
 	}
 
-	// Call engine
-	outputs, err := aas.eng.Check(logging.ToContext(ctx, log), []*enginev1.CheckInput{input})
+	requestID := lookupOrEmptyString(r.GetContext(), "requestId")
+	checkResp, err := RunCheckPipeline(ctx, log, aas.eng, []*enginev1.CheckInput{input}, requestID, includeMeta)
 	if err != nil {
-		log.Error("Policy check failed", zap.Error(err))
-		if errors.Is(err, compile.PolicyCompilationErr{}) {
-			return nil, status.Errorf(codes.FailedPrecondition, "Check failed due to invalid policy")
-		}
-		return nil, status.Errorf(codes.Internal, "Policy check failed")
+		return nil, err
 	}
 
-	return tracing.RecordSpan2(ctx, "assemble_response", func(_ context.Context, _ trace.Span) (*svcv1.AccessEvaluationResponse, error) {
-		output := outputs[0]
-		actionName := r.Action.GetName()
-		decision := output.Actions[actionName].Effect == effectv1.Effect_EFFECT_ALLOW
-		response := &svcv1.AccessEvaluationResponse{
-			Decision: &decision,
+	actionName := r.Action.GetName()
+	decision := checkResp.Results[0].Actions[actionName] == effectv1.Effect_EFFECT_ALLOW
+	response := &svcv1.AccessEvaluationResponse{Decision: &decision}
+	if includeMeta {
+		respAsValue, err := messageToValue(checkResp.ProtoReflect())
+		if err != nil {
+			return nil, err
 		}
-		if includeMeta {
-			// Build CheckResourcesResponse structure for context
-			checkResp := buildCheckResourcesResponse(lookupOrEmptyString(r.GetContext(), "requestId"), []*enginev1.CheckInput{input}, outputs, true)
-
-			// Convert to value for context
-			respAsValue, err := messageToValue(checkResp.ProtoReflect())
-			if err != nil {
-				return nil, err
-			}
-			response.Context = map[string]*structpb.Value{cerbosProp("response"): respAsValue}
-		}
-		return response, nil
-	})
+		response.Context = map[string]*structpb.Value{cerbosProp("response"): respAsValue}
+	}
+	return response, nil
 }
 
 const (
@@ -246,22 +228,14 @@ func (aas *AuthzenAuthorizationService) AccessEvaluationBatch(ctx context.Contex
 			inputIdx++
 		}
 
-		// Call engine
-		outputs, err := aas.eng.Check(logging.ToContext(ctx, log), inputs)
+		requestID := lookupOrEmptyString(reqs[0].context, "requestId")
+		checkResp, err := RunCheckPipeline(ctx, log, aas.eng, inputs, requestID, includeMeta)
 		if err != nil {
-			log.Error("Policy check failed", zap.Error(err))
-			if errors.Is(err, compile.PolicyCompilationErr{}) {
-				return nil, status.Errorf(codes.FailedPrecondition, "Check failed due to invalid policy")
-			}
-			return nil, status.Errorf(codes.Internal, "Policy check failed")
+			return nil, err
 		}
 
 		var retCtx map[string]*structpb.Value
 		if includeMeta {
-			// Build CheckResourcesResponse for this group
-			checkResp := buildCheckResourcesResponse(lookupOrEmptyString(reqs[0].context, "requestId"), inputs, outputs, true)
-
-			// Convert to value for context
 			respAsValue, err := messageToValue(checkResp.ProtoReflect())
 			if err != nil {
 				return nil, err
@@ -270,8 +244,7 @@ func (aas *AuthzenAuthorizationService) AccessEvaluationBatch(ctx context.Contex
 		}
 		// Map results back to original positions
 		for _, mapping := range mappings {
-			output := outputs[mapping.inputIdx]
-			decision := output.Actions[mapping.action].Effect == effectv1.Effect_EFFECT_ALLOW
+			decision := checkResp.Results[mapping.inputIdx].Actions[mapping.action] == effectv1.Effect_EFFECT_ALLOW
 
 			responses[mapping.responseIdx] = &svcv1.AccessEvaluationResponse{
 				Decision: &decision,
@@ -290,53 +263,6 @@ func (aas *AuthzenAuthorizationService) AccessEvaluationBatch(ctx context.Contex
 	return &svcv1.AccessEvaluationBatchResponse{
 		Evaluations: responses,
 	}, nil
-}
-
-// TODO(db): share this function with CerbosService?
-func buildCheckResourcesResponse(requestID string, inputs []*enginev1.CheckInput, outputs []*enginev1.CheckOutput, includeMeta bool) *responsev1.CheckResourcesResponse {
-	result := &responsev1.CheckResourcesResponse{
-		RequestId: requestID,
-		Results:   make([]*responsev1.CheckResourcesResponse_ResultEntry, len(outputs)),
-	}
-
-	for i, out := range outputs {
-		resource := inputs[i].Resource //nolint:gosec
-		entry := &responsev1.CheckResourcesResponse_ResultEntry{
-			Resource: &responsev1.CheckResourcesResponse_ResultEntry_Resource{
-				Id:            resource.Id,
-				Kind:          resource.Kind,
-				PolicyVersion: resource.PolicyVersion,
-				Scope:         resource.Scope,
-			},
-			ValidationErrors: out.ValidationErrors,
-			Actions:          make(map[string]effectv1.Effect, len(out.Actions)),
-		}
-
-		if includeMeta {
-			entry.Meta = &responsev1.CheckResourcesResponse_ResultEntry_Meta{
-				EffectiveDerivedRoles: out.EffectiveDerivedRoles,
-				Actions:               make(map[string]*responsev1.CheckResourcesResponse_ResultEntry_Meta_EffectMeta, len(out.Actions)),
-			}
-		}
-
-		if len(out.Outputs) > 0 {
-			entry.Outputs = out.Outputs
-		}
-
-		for action, actionEffect := range out.Actions {
-			entry.Actions[action] = actionEffect.Effect
-			if includeMeta {
-				entry.Meta.Actions[action] = &responsev1.CheckResourcesResponse_ResultEntry_Meta_EffectMeta{
-					MatchedPolicy: actionEffect.Policy,
-					MatchedScope:  actionEffect.Scope,
-				}
-			}
-		}
-
-		result.Results[i] = entry
-	}
-
-	return result
 }
 
 func merge[T any](defaults, override *T) *T {
