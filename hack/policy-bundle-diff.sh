@@ -317,6 +317,7 @@ first_diff_field() {
     "condition.match.none"
     "condition"
     "actions"
+    "allowActions"
     "effect"
     "roles"
     "derivedRoles"
