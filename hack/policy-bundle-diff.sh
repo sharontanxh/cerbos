@@ -334,6 +334,37 @@ first_diff_field() {
     bval=$(echo "$before" | jq -c "try .$path catch null")
     aval=$(echo "$after"  | jq -c "try .$path catch null")
     if [[ "$bval" != "$aval" ]]; then
+      # Element-wise drill: if both sides are arrays, walk to find the first
+      # differing index and emit `<path>.<index>` with that element's
+      # before/after (null when added/removed). Matches the spec's
+      # "deepest leaf where the actual difference is" rule.
+      local btype atype
+      btype=$(echo "$bval" | jq -r 'type' 2>/dev/null || echo "")
+      atype=$(echo "$aval" | jq -r 'type' 2>/dev/null || echo "")
+      if [[ "$btype" == "array" && "$atype" == "array" ]]; then
+        local blen alen maxlen i belem aelem
+        blen=$(echo "$bval" | jq 'length')
+        alen=$(echo "$aval" | jq 'length')
+        maxlen=$(( blen > alen ? blen : alen ))
+        for ((i = 0; i < maxlen; i++)); do
+          if (( i < blen )); then
+            belem=$(echo "$bval" | jq -c ".[$i]")
+          else
+            belem="null"
+          fi
+          if (( i < alen )); then
+            aelem=$(echo "$aval" | jq -c ".[$i]")
+          else
+            aelem="null"
+          fi
+          if [[ "$belem" != "$aelem" ]]; then
+            printf '%s.%d\t%s\t%s' "$path" "$i" "$belem" "$aelem"
+            return 0
+          fi
+        done
+      fi
+      # Not an array pair (or arrays equal element-wise but jq differs on
+      # whitespace, which we already eliminated via -c). Emit whole-value.
       printf '%s\t%s\t%s' "$path" "$bval" "$aval"
       return 0
     fi
