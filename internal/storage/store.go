@@ -27,8 +27,10 @@ var (
 )
 
 var (
-	ErrPolicyIDCollision    = errors.New("policy ID collision")
-	ErrUnsupportedOperation = errors.New("operation not supported")
+	ErrPolicyIDCollision        = errors.New("policy ID collision")
+	ErrUnsupportedOperation     = errors.New("operation not supported")
+	ErrRevisionNotFound         = errors.New("revision not found")
+	ErrPolicyNotFoundAtRevision = errors.New("policy not found at revision")
 )
 
 // InvalidPolicyError is a custom error to signal that a policy is invalid.
@@ -177,6 +179,15 @@ type MutableStore interface {
 	DeleteSchema(context.Context, ...string) (uint32, error)
 	Delete(context.Context, ...string) (uint32, error)
 	PurgeRevisions(context.Context, uint32) (uint32, error)
+}
+
+// Versioned is implemented by stores whose policies have a queryable revision history.
+type Versioned interface {
+	// GetPolicyAtRevision returns the policy as it existed at the requested revision.
+	// Implementations MUST NOT mutate the working tree or index of the underlying store.
+	// Returns ErrRevisionNotFound if the revision string is not a known revision.
+	// Returns ErrPolicyNotFoundAtRevision if the policy ID does not exist at that revision.
+	GetPolicyAtRevision(ctx context.Context, id namer.ModuleID, revision string) (*policy.Wrapper, error)
 }
 
 // Verifiable stores allow querying whether the requirements for the store are met.

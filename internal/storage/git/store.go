@@ -42,6 +42,7 @@ var (
 	_ storage.SourceStore  = (*Store)(nil)
 	_ storage.Reloadable   = (*Store)(nil)
 	_ storage.Subscribable = (*Store)(nil)
+	_ storage.Versioned    = (*Store)(nil)
 )
 
 func init() {
@@ -202,6 +203,10 @@ func (s *Store) LoadSchema(ctx context.Context, url string) (io.ReadCloser, erro
 
 func (s *Store) LoadPolicy(ctx context.Context, file ...string) ([]*policy.Wrapper, error) {
 	return s.idx.LoadPolicy(ctx, file...)
+}
+
+func (s *Store) GetPolicyAtRevision(_ context.Context, _ namer.ModuleID, _ string) (*policy.Wrapper, error) {
+	return nil, storage.ErrUnsupportedOperation
 }
 
 func (s *Store) RepoStats(ctx context.Context) storage.RepoStats {
